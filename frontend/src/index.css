@@ -1,0 +1,165 @@
+/* Tailwind CSS directives - ignore linter warnings */
+/* stylelint-disable at-rule-no-unknown */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+/* stylelint-enable at-rule-no-unknown */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #1a1a1a;
+    --bg-tertiary: #2a2a2a;
+    --text-primary: #ffffff;
+    --text-secondary: #9ca3af;
+}
+
+[data-theme='light'] {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f3f4f6;
+    --bg-tertiary: #e5e7eb;
+    --text-primary: #1f2937;
+    --text-secondary: #6b7280;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3a3a3a;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #4a4a4a;
+}
+
+/* Animations */
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.animate-pulse-slow {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* File drop zone */
+.drop-zone {
+    transition: all 0.3s ease;
+}
+
+.drop-zone.dragging {
+    border-color: #3b82f6;
+    background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* Video elements */
+video {
+    object-fit: cover;
+    background-color: #1a1a1a;
+}
+
+/* Button hover effects */
+button {
+    transition: all 0.2s ease;
+}
+
+button:active {
+    transform: scale(0.98);
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+
+    /* Reduce font sizes on mobile */
+    h1 {
+        font-size: 1.5rem !important;
+    }
+
+    h2 {
+        font-size: 1.25rem !important;
+    }
+
+    /* Make video elements responsive */
+    video {
+        max-height: 40vh;
+    }
+
+    /* Adjust padding for mobile */
+    .p-6 {
+        padding: 1rem !important;
+    }
+
+    /* Stack buttons vertically on small screens */
+    .flex.items-center.gap-4 {
+        flex-wrap: wrap;
+    }
+
+    /* Make chat window smaller on mobile */
+    .chat-container {
+        width: 90vw !important;
+        height: 60vh !important;
+        bottom: 0 !important;
+        right: 0 !important;
+    }
+}
+
+@media (max-width: 640px) {
+
+    /* Further reduce spacing on very small screens */
+    .gap-6 {
+        gap: 1rem !important;
+    }
+
+    .gap-4 {
+        gap: 0.5rem !important;
+    }
+
+    /* Make drop zone more touch-friendly */
+    .drop-zone {
+        padding: 2rem 1rem !important;
+        min-height: 150px;
+    }
+
+    /* Adjust header padding */
+    header {
+        padding: 1rem !important;
+    }
+}
+
+/* Tablet optimization */
+@media (min-width: 768px) and (max-width: 1024px) {
+    video {
+        max-height: 50vh;
+    }
+}
