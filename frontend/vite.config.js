@@ -9,12 +9,15 @@ export default defineConfig({
     },
     define: {
         'global': 'globalThis',
-        'process.env': {}
+        'process.env': {},
+        'process.version': JSON.stringify(''),
+        'process.browser': true
     },
     resolve: {
         alias: {
             stream: 'stream-browserify',
-            util: 'util'
+            util: 'util',
+            process: 'process/browser'
         }
     },
     optimizeDeps: {
@@ -22,6 +25,14 @@ export default defineConfig({
             define: {
                 global: 'globalThis'
             }
+        }
+    },
+    build: {
+        rollupOptions: {
+            plugins: []
+        },
+        commonjsOptions: {
+            transformMixedEsModules: true
         }
     }
 })
