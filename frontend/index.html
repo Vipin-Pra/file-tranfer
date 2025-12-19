@@ -9,7 +9,14 @@
     <script>
         // Fix for simple-peer: define global and process for browser
         window.global = window;
-        window.process = window.process || { env: {}, browser: true, version: '' };
+        window.process = window.process || {
+            env: {},
+            browser: true,
+            version: '',
+            nextTick: function (callback) {
+                setTimeout(callback, 0);
+            }
+        };
     </script>
 </head>
 
