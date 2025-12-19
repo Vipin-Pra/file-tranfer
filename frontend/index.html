@@ -7,8 +7,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title> File Share & Video Call</title>
     <script>
-        // Fix for simple-peer: define global variable for browser
+        // Fix for simple-peer: define global and process for browser
         window.global = window;
+        window.process = window.process || { env: {}, browser: true, version: '' };
     </script>
 </head>
 
