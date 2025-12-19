@@ -139,6 +139,8 @@ function App() {
                 initiator,
                 trickle: true,
                 config: ICE_SERVERS,
+                // Enable data channels for chat and file transfer
+                channelName: 'data-channel',
                 // Increase channel buffer for large file transfers
                 channelConfig: {
                     ordered: true,
