@@ -10,7 +10,7 @@ const app = express();
 const httpServer = createServer(app);
 
 // Configure CORS for both Express and Socket.io
-const allowedOrigins = process.env.CORS_ORIGIN 
+const allowedOrigins = process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',')
     : ['http://localhost:5173', 'http://localhost:3000'];
 

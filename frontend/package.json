@@ -9,16 +9,16 @@
         "preview": "vite preview"
     },
     "dependencies": {
+        "events": "^3.3.0",
+        "lucide-react": "^0.292.0",
+        "process": "^0.11.10",
+        "qrcode.react": "^3.1.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
         "simple-peer": "^9.11.1",
         "socket.io-client": "^4.6.1",
-        "qrcode.react": "^3.1.0",
-        "lucide-react": "^0.292.0",
         "stream-browserify": "^3.0.0",
-        "util": "^0.12.5",
-        "events": "^3.3.0",
-        "process": "^0.11.10"
+        "util": "^0.12.5"
     },
     "devDependencies": {
         "@types/react": "^18.2.37",
