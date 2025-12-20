@@ -7,16 +7,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title> File Share & Video Call</title>
     <script>
-        // Fix for simple-peer: define global and process for browser
+        // Comprehensive polyfills for simple-peer in browser
         window.global = window;
         window.process = window.process || {
-            env: {},
+            env: { NODE_ENV: 'production' },
             browser: true,
-            version: '',
-            nextTick: function (callback) {
-                setTimeout(callback, 0);
-            }
+            version: 'v16.0.0',
+            platform: 'browser',
+            nextTick: function (callback, ...args) {
+                Promise.resolve().then(() => callback(...args));
+            },
+            cwd: function () { return '/' },
+            on: function () { },
+            once: function () { },
+            off: function () { },
+            emit: function () { },
+            binding: function () { return {} },
+            umask: function () { return 0 }
         };
+        // Add Buffer if not present
+        if (typeof window.Buffer === 'undefined') {
+            window.Buffer = {
+                isBuffer: function () { return false }
+            };
+        }
     </script>
 </head>
 
