@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { Buffer } from 'buffer'
 
 export default defineConfig({
     plugins: [react()],
@@ -10,14 +11,16 @@ export default defineConfig({
     define: {
         'global': 'globalThis',
         'process.env': {},
-        'process.version': JSON.stringify(''),
-        'process.browser': true
+        'process.version': JSON.stringify('v16.0.0'),
+        'process.browser': true,
+        'Buffer': ['buffer', 'Buffer']
     },
     resolve: {
         alias: {
             stream: 'stream-browserify',
             util: 'util',
-            process: 'process/browser'
+            process: 'process/browser',
+            buffer: 'buffer'
         }
     },
     optimizeDeps: {
