@@ -6,228 +6,213 @@ import FileTransfer from './components/FileTransfer';
 import RoomCreator from './components/RoomCreator';
 import RoomJoiner from './components/RoomJoiner';
 import Chat from './components/Chat';
-import { Video, FileText, Users, LogOut, Sun, Moon, Volume2, VolumeX } from 'lucide-react';
+import ErrorBoundary from './components/ErrorBoundary';
+import { Video, FileText, Users, LogOut, Sun, Moon, Wifi, WifiOff, MessageCircle } from 'lucide-react';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
-import { playSound, toggleSound, isSoundEnabled } from './utils/sounds';
+import { playSound } from './utils/sounds';
 
 const SIGNALING_SERVER = import.meta.env.VITE_SIGNALING_SERVER || 'http://localhost:3001';
 
-// Ice servers for WebRTC (STUN + free TURN servers for better connectivity)
 const ICE_SERVERS = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
         {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
-            credential: 'openrelayproject'
+            credential: 'openrelayproject',
         },
         {
             urls: 'turn:openrelay.metered.ca:443',
             username: 'openrelayproject',
-            credential: 'openrelayproject'
+            credential: 'openrelayproject',
         },
         {
             urls: 'turn:openrelay.metered.ca:443?transport=tcp',
             username: 'openrelayproject',
-            credential: 'openrelayproject'
-        }
-    ]
+            credential: 'openrelayproject',
+        },
+    ],
 };
 
 function App() {
-    console.log('App component rendering...');
-
     const { theme, toggleTheme } = useTheme();
 
-    const [mode, setMode] = useState('home'); // 'home', 'create', 'join'
-    const [connectionState, setConnectionState] = useState('disconnected'); // 'disconnected', 'connecting', 'connected'
+    // Core state
+    const [mode, setMode] = useState('home');
+    const [connectionState, setConnectionState] = useState('disconnected');
     const [pin, setPin] = useState('');
     const [peerId, setPeerId] = useState('');
     const [error, setError] = useState('');
     const [isCallActive, setIsCallActive] = useState(false);
-    const [activeTab, setActiveTab] = useState('video'); // 'video' or 'file'
-    const [soundEnabled, setSoundEnabled] = useState(isSoundEnabled());
+    const [activeTab, setActiveTab] = useState('video');
+    const [unreadMessages, setUnreadMessages] = useState(0);
 
+    // Connection state
+    const [serverConnected, setServerConnected] = useState(false);
+    const [isReconnecting, setIsReconnecting] = useState(false);
+    const [reconnectAttempts, setReconnectAttempts] = useState(0);
+    const maxReconnectAttempts = 10;
+
+    // Refs
     const socketRef = useRef(null);
     const peerRef = useRef(null);
     const isInitiatorRef = useRef(false);
     const remotePeerIdRef = useRef(null);
 
-    // Initialize socket connection
+    // --- Network status ---
     useEffect(() => {
-        socketRef.current = io(SIGNALING_SERVER, {
-            transports: ['websocket'],
+        const onOnline = () => {
+            setError('');
+            if (!serverConnected && socketRef.current) socketRef.current.connect();
+        };
+        const onOffline = () => {
+            setServerConnected(false);
+            setError('Network connection lost. Please check your internet.');
+        };
+
+        window.addEventListener('online', onOnline);
+        window.addEventListener('offline', onOffline);
+        return () => {
+            window.removeEventListener('online', onOnline);
+            window.removeEventListener('offline', onOffline);
+        };
+    }, [serverConnected]);
+
+    // --- Socket initialization ---
+    useEffect(() => {
+        const socket = io(SIGNALING_SERVER, {
+            transports: ['websocket', 'polling'],
             reconnection: true,
             reconnectionDelay: 1000,
-            reconnectionAttempts: 5
+            reconnectionDelayMax: 5000,
+            reconnectionAttempts: Infinity,
+            timeout: 20000,
+        });
+        socketRef.current = socket;
+
+        socket.on('connect', () => {
+            setServerConnected(true);
+            setIsReconnecting(false);
+            setReconnectAttempts(0);
+            setError('');
         });
 
-        socketRef.current.on('connect', () => {
-            console.log('Connected to signaling server');
-        });
-
-        socketRef.current.on('disconnect', () => {
-            console.log('Disconnected from signaling server');
-        });
-
-        socketRef.current.on('error', (err) => {
-            console.error('Socket error:', err);
-            setError('Connection error. Please try again.');
-        });
-
-        return () => {
-            if (socketRef.current) {
-                socketRef.current.disconnect();
+        socket.on('disconnect', (reason) => {
+            setServerConnected(false);
+            if (reason !== 'io client disconnect') {
+                setError('Connection lost. Reconnecting...');
             }
-        };
+        });
+
+        socket.on('connect_error', () => {
+            setServerConnected(false);
+            setError('Unable to connect to server. Retrying...');
+        });
+
+        socket.on('error', ({ message }) => setError(message));
+        socket.on('server-shutdown', ({ message }) => setError(message));
+
+        return () => socket.disconnect();
     }, []);
 
-    // Setup socket event listeners
+    // --- Socket event listeners ---
     useEffect(() => {
-        if (!socketRef.current) return;
+        const socket = socketRef.current;
+        if (!socket) return;
 
-        // Room created successfully
-        socketRef.current.on('room-created', ({ pin: roomPin }) => {
+        socket.on('room-created', ({ pin: roomPin }) => {
             setPin(roomPin);
             isInitiatorRef.current = true;
-            // Keep disconnected state to show PIN/QR code until peer joins
-            console.log('Room created with PIN:', roomPin);
         });
 
-        // Room joined successfully
-        socketRef.current.on('room-joined', ({ pin: roomPin, creatorId }) => {
+        socket.on('room-joined', ({ pin: roomPin, creatorId }) => {
             setPin(roomPin);
             setPeerId(creatorId);
             remotePeerIdRef.current = creatorId;
             isInitiatorRef.current = false;
             setConnectionState('connecting');
-            console.log('Joined room with PIN:', roomPin, 'Creator ID:', creatorId);
-
-            // As receiver, create peer and initiate connection
             createPeer(true);
         });
 
-        // Peer joined the room (sender receives this)
-        socketRef.current.on('peer-joined', ({ peerId: remotePeerId }) => {
+        socket.on('peer-joined', ({ peerId: remotePeerId }) => {
             setPeerId(remotePeerId);
             remotePeerIdRef.current = remotePeerId;
             setConnectionState('connecting');
-            console.log('Peer joined:', remotePeerId);
-
-            // As sender, create peer connection
             createPeer(false);
         });
 
-        // Receive WebRTC signal
-        socketRef.current.on('signal', ({ signal, from }) => {
-            console.log('Received signal from:', from);
-            setPeerId(from);
+        socket.on('signal', ({ signal, from }) => {
             remotePeerIdRef.current = from;
-
-            if (peerRef.current) {
-                peerRef.current.signal(signal);
-            }
+            setPeerId(from);
+            if (peerRef.current) peerRef.current.signal(signal);
         });
 
-        // Peer disconnected
-        socketRef.current.on('peer-disconnected', () => {
-            console.log('Peer disconnected');
+        socket.on('peer-disconnected', () => {
             playSound('peerDisconnected');
             handleDisconnect();
         });
 
         return () => {
-            socketRef.current.off('room-created');
-            socketRef.current.off('room-joined');
-            socketRef.current.off('peer-joined');
-            socketRef.current.off('signal');
-            socketRef.current.off('peer-disconnected');
+            socket.off('room-created');
+            socket.off('room-joined');
+            socket.off('peer-joined');
+            socket.off('signal');
+            socket.off('peer-disconnected');
         };
     }, []);
 
-    // Create peer connection
+    // --- Create WebRTC peer ---
     const createPeer = (initiator) => {
         try {
             const peer = new Peer({
                 initiator,
                 trickle: true,
                 config: ICE_SERVERS,
-                // Enable data channels for chat and file transfer
                 channelName: 'data-channel',
-                // Increase channel buffer for large file transfers
-                channelConfig: {
-                    ordered: true,
-                    maxRetransmits: 30
-                },
-                // Increase offer/answer constraints
-                offerOptions: {
-                    offerToReceiveAudio: true,
-                    offerToReceiveVideo: true
-                }
+                channelConfig: { ordered: true, maxRetransmits: 30 },
+                offerOptions: { offerToReceiveAudio: true, offerToReceiveVideo: true },
             });
 
             peer.on('signal', (signal) => {
-                console.log('Sending signal to:', remotePeerIdRef.current);
                 if (remotePeerIdRef.current) {
-                    socketRef.current.emit('signal', {
-                        signal,
-                        to: remotePeerIdRef.current
-                    });
+                    socketRef.current.emit('signal', { signal, to: remotePeerIdRef.current });
                 }
             });
 
             peer.on('connect', () => {
-                console.log('P2P connection established');
                 setConnectionState('connected');
                 setIsCallActive(true);
                 setError('');
                 playSound('peerJoined');
             });
 
-            peer.on('error', (err) => {
-                console.error('Peer connection error:', err);
-                setError('Connection failed. Please try again.');
-            });
-
-            peer.on('close', () => {
-                console.log('Peer connection closed');
-                handleDisconnect();
-            });
+            peer.on('error', () => setError('Connection failed. Please try again.'));
+            peer.on('close', () => handleDisconnect());
 
             peerRef.current = peer;
-        } catch (err) {
-            console.error('Error creating peer:', err);
-            setError('Failed to create connection. Please try again.');
+        } catch {
+            setError('Failed to create connection.');
         }
     };
 
-    // Create room
+    // --- Actions ---
     const handleCreateRoom = () => {
         setMode('create');
         setError('');
         socketRef.current.emit('create-room');
     };
 
-    // Join room
     const handleJoinRoom = (roomPin) => {
         setMode('join');
         setError('');
         socketRef.current.emit('join-room', { pin: roomPin });
     };
 
-    // Disconnect and reset
     const handleDisconnect = () => {
-        if (peerRef.current) {
-            peerRef.current.destroy();
-            peerRef.current = null;
-        }
-
-        if (socketRef.current) {
-            socketRef.current.emit('leave-room');
-        }
-
+        peerRef.current?.destroy();
+        peerRef.current = null;
+        socketRef.current?.emit('leave-room');
         setConnectionState('disconnected');
         setIsCallActive(false);
         setPin('');
@@ -237,19 +222,27 @@ function App() {
         isInitiatorRef.current = false;
     };
 
-    // End call
-    const handleEndCall = () => {
-        setIsCallActive(false);
-    };
-
-    // Render home screen
+    // --- Home screen ---
     if (mode === 'home') {
         return (
             <div className="min-h-screen bg-gradient-to-br from-dark-900 via-dark-800 to-dark-900 flex items-center justify-center p-4">
-                {/* Theme Toggle */}
+                {/* Connection status */}
+                <div className="fixed top-4 left-4 z-50">
+                    <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${
+                        serverConnected ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                    }`}>
+                        {serverConnected ? (
+                            <><Wifi size={16} /><span className="text-sm font-medium">Connected</span></>
+                        ) : (
+                            <><WifiOff size={16} /><span className="text-sm font-medium">Disconnected</span></>
+                        )}
+                    </div>
+                </div>
+
+                {/* Theme toggle */}
                 <button
                     onClick={toggleTheme}
-                    className="fixed top-6 right-6 bg-dark-700 hover:bg-dark-600 text-white p-3 rounded-full shadow-lg transition-all z-50"
+                    className="fixed top-6 right-6 bg-dark-700 hover:bg-dark-600 text-white p-3 rounded-full shadow-lg z-50"
                     title="Toggle theme"
                 >
                     {theme === 'dark' ? <Sun size={24} /> : <Moon size={24} />}
@@ -257,12 +250,8 @@ function App() {
 
                 <div className="max-w-4xl w-full">
                     <div className="text-center mb-12">
-                        <h1 className="text-5xl font-bold text-white mb-4">
-                            P2P Connect
-                        </h1>
-                        <p className="text-xl text-gray-400">
-                            Secure peer-to-peer file sharing and video calling
-                        </p>
+                        <h1 className="text-5xl font-bold text-white mb-4">P2P Connect</h1>
+                        <p className="text-xl text-gray-400">Secure peer-to-peer file sharing and video calling</p>
                     </div>
 
                     <div className="grid md:grid-cols-2 gap-6">
@@ -274,9 +263,7 @@ function App() {
                                 <Users className="w-8 h-8 text-blue-500" />
                             </div>
                             <h2 className="text-2xl font-bold text-white mb-2">Create Room</h2>
-                            <p className="text-gray-400">
-                                Start a new session and invite someone to join
-                            </p>
+                            <p className="text-gray-400">Start a new session and invite someone to join</p>
                         </button>
 
                         <button
@@ -287,25 +274,20 @@ function App() {
                                 <LogOut className="w-8 h-8 text-green-500 transform rotate-180" />
                             </div>
                             <h2 className="text-2xl font-bold text-white mb-2">Join Room</h2>
-                            <p className="text-gray-400">
-                                Enter a PIN to connect with someone
-                            </p>
+                            <p className="text-gray-400">Enter a PIN to connect with someone</p>
                         </button>
                     </div>
 
                     <div className="mt-12 text-center">
                         <div className="flex justify-center gap-8 text-gray-500">
                             <div className="flex items-center gap-2">
-                                <Video size={20} />
-                                <span>HD Video Calls</span>
+                                <Video size={20} /><span>HD Video Calls</span>
                             </div>
                             <div className="flex items-center gap-2">
-                                <FileText size={20} />
-                                <span>Large File Transfer</span>
+                                <FileText size={20} /><span>Large File Transfer</span>
                             </div>
                             <div className="flex items-center gap-2">
-                                <Users size={20} />
-                                <span>End-to-End P2P</span>
+                                <Users size={20} /><span>End-to-End P2P</span>
                             </div>
                         </div>
                     </div>
@@ -314,15 +296,12 @@ function App() {
         );
     }
 
-    // Render join screen
+    // --- Join screen ---
     if (mode === 'join' && connectionState === 'disconnected') {
         return (
             <div className="min-h-screen bg-dark-900 flex items-center justify-center p-4">
                 <div className="max-w-md w-full">
-                    <button
-                        onClick={() => setMode('home')}
-                        className="mb-4 text-gray-400 hover:text-white transition-all"
-                    >
+                    <button onClick={() => setMode('home')} className="mb-4 text-gray-400 hover:text-white transition-all">
                         ← Back
                     </button>
                     <RoomJoiner
@@ -335,20 +314,17 @@ function App() {
         );
     }
 
-    // Render create room screen (waiting for peer)
+    // --- Create room screen (waiting for peer) ---
     if (mode === 'create' && connectionState !== 'connected') {
         return (
             <div className="min-h-screen bg-dark-900 flex items-center justify-center p-4">
                 <div className="max-w-2xl w-full">
-                    <button
-                        onClick={handleDisconnect}
-                        className="mb-4 text-gray-400 hover:text-white transition-all"
-                    >
+                    <button onClick={handleDisconnect} className="mb-4 text-gray-400 hover:text-white transition-all">
                         ← Cancel
                     </button>
                     <RoomCreator
                         onCreateRoom={handleCreateRoom}
-                        pin={pin} false
+                        pin={pin}
                         isCreating={connectionState === 'connecting'}
                     />
                 </div>
@@ -356,107 +332,68 @@ function App() {
         );
     }
 
-    // Render connected screen with video call and file transfer
+    // --- Connected screen ---
     if (connectionState === 'connected' && isCallActive) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-dark-900 via-dark-800 to-dark-900 flex flex-col">
-                {/* Header */}
-                <header className="bg-dark-800/80 backdrop-blur-sm border-b border-dark-700 px-6 py-4">
-                    <div className="flex items-center justify-between flex-wrap gap-4">
-                        <div className="flex items-center gap-4">
-                            <h1 className="text-2xl font-bold text-white">P2P Connect</h1>
-                            <div className="bg-dark-700 px-4 py-2 rounded-lg">
-                                <span className="text-gray-400 text-sm">PIN:</span>
-                                <span className="text-blue-500 font-mono font-bold ml-2">{pin}</span>
-                            </div>
+            <div className="h-screen bg-gray-900 flex overflow-hidden">
+                {/* Left: Chat */}
+                <div
+                    className="w-1/3 flex flex-col border-r border-gray-700 relative"
+                    onClick={() => setUnreadMessages(0)}
+                >
+                    {unreadMessages > 0 && (
+                        <div className="absolute top-3 right-3 z-10 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center animate-pulse">
+                            {unreadMessages > 9 ? '9+' : unreadMessages}
                         </div>
+                    )}
+                    <Chat
+                        peer={peerRef.current}
+                        onNewMessage={() => setUnreadMessages((c) => c + 1)}
+                    />
+                </div>
 
-                        <div className="flex items-center gap-4">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                                <span className="text-sm text-gray-400">Connected</span>
-                            </div>
-                            <button
-                                onClick={() => {
-                                    const newState = toggleSound();
-                                    setSoundEnabled(newState);
-                                }}
-                                className="bg-dark-700 hover:bg-dark-600 text-white p-2 rounded-lg transition-all"
-                                title={soundEnabled ? "Disable sounds" : "Enable sounds"}
-                            >
-                                {soundEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
-                            </button>
-                            <button
-                                onClick={toggleTheme}
-                                className="bg-dark-700 hover:bg-dark-600 text-white p-2 rounded-lg transition-all"
-                                title="Toggle theme"
-                            >
-                                {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-                            </button>
-                            <button
-                                onClick={handleDisconnect}
-                                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-all flex items-center gap-2"
-                            >
-                                <LogOut size={16} />
-                                <span className="hidden sm:inline">Disconnect</span>
-                            </button>
-                        </div>
-                    </div>
-                </header>
-
-                {/* Tabs */}
-                <div className="bg-dark-800 border-b border-dark-700 px-6">
-                    <div className="flex gap-4">
+                {/* Right: Video / File Transfer */}
+                <div className="flex-1 flex flex-col">
+                    {/* Tab switcher */}
+                    <div className="flex border-b border-gray-700 bg-gray-800">
                         <button
                             onClick={() => setActiveTab('video')}
-                            className={`px-4 py-3 font-medium transition-all border-b-2 ${activeTab === 'video'
-                                ? 'text-blue-500 border-blue-500'
-                                : 'text-gray-400 border-transparent hover:text-white'
-                                }`}
+                            className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                                activeTab === 'video'
+                                    ? 'text-blue-400 border-b-2 border-blue-400'
+                                    : 'text-gray-400 hover:text-white'
+                            }`}
                         >
-                            <div className="flex items-center gap-2">
-                                <Video size={18} />
-                                <span>Video Call</span>
-                            </div>
+                            <Video size={18} /> Video Call
                         </button>
                         <button
                             onClick={() => setActiveTab('file')}
-                            className={`px-4 py-3 font-medium transition-all border-b-2 ${activeTab === 'file'
-                                ? 'text-blue-500 border-blue-500'
-                                : 'text-gray-400 border-transparent hover:text-white'
-                                }`}
+                            className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                                activeTab === 'file'
+                                    ? 'text-blue-400 border-b-2 border-blue-400'
+                                    : 'text-gray-400 hover:text-white'
+                            }`}
                         >
-                            <div className="flex items-center gap-2">
-                                <FileText size={18} />
-                                <span>File Transfer</span>
-                            </div>
+                            <FileText size={18} /> File Transfer
                         </button>
                     </div>
-                </div>
 
-                {/* Main Content */}
-                <div className="flex-1 overflow-auto p-4">
                     {activeTab === 'video' ? (
                         <VideoCall
                             peer={peerRef.current}
                             isCallActive={isCallActive}
-                            onEndCall={handleEndCall}
+                            onEndCall={handleDisconnect}
                         />
                     ) : (
-                        <FileTransfer
-                            peer={peerRef.current}
-                            socket={socketRef.current}
-                            peerId={peerId}
-                        />
+                        <div className="h-full p-4 overflow-auto">
+                            <FileTransfer
+                                peer={peerRef.current}
+                                socket={socketRef.current}
+                                peerId={peerId}
+                            />
+                        </div>
                     )}
                 </div>
-
-                {/* Chat Component */}
-                <Chat
-                    peer={peerRef.current}
-                    socket={socketRef.current}
-                    peerId={peerId}
-                />
             </div>
         );
     }
@@ -466,9 +403,11 @@ function App() {
 
 function AppWrapper() {
     return (
-        <ThemeProvider>
-            <App />
-        </ThemeProvider>
+        <ErrorBoundary>
+            <ThemeProvider>
+                <App />
+            </ThemeProvider>
+        </ErrorBoundary>
     );
 }
 

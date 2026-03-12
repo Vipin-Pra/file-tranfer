@@ -1,10 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, PhoneOff, Monitor, Circle, Square } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, Monitor, Circle, Square } from 'lucide-react';
 
 const VideoCall = ({ peer, isCallActive, onEndCall }) => {
     const localVideoRef = useRef(null);
     const remoteVideoRef = useRef(null);
     const localStreamRef = useRef(null);
+    const remoteStreamRef = useRef(null);
     const mediaRecorderRef = useRef(null);
     const recordedChunksRef = useRef([]);
 
@@ -14,202 +15,137 @@ const VideoCall = ({ peer, isCallActive, onEndCall }) => {
     const [isScreenSharing, setIsScreenSharing] = useState(false);
     const [isRecording, setIsRecording] = useState(false);
     const [callDuration, setCallDuration] = useState(0);
-    const [startTime, setStartTime] = useState(null);
+    const [showLocalInLarge, setShowLocalInLarge] = useState(false);
 
     // Call duration timer
     useEffect(() => {
-        if (!isCallActive) {
-            setCallDuration(0);
-            setStartTime(null);
-            return;
-        }
-
-        setStartTime(Date.now());
-        const interval = setInterval(() => {
-            setCallDuration(Math.floor((Date.now() - Date.now()) / 1000));
+        if (!isCallActive) return;
+        const start = Date.now();
+        const id = setInterval(() => {
+            setCallDuration(Math.floor((Date.now() - start) / 1000));
         }, 1000);
-
-        return () => clearInterval(interval);
+        return () => clearInterval(id);
     }, [isCallActive]);
 
-    useEffect(() => {
-        if (startTime) {
-            const interval = setInterval(() => {
-                setCallDuration(Math.floor((Date.now() - startTime) / 1000));
-            }, 1000);
-            return () => clearInterval(interval);
-        }
-    }, [startTime]);
-
-    // Initialize local video stream
+    // Initialize local media
     useEffect(() => {
         if (!isCallActive) return;
+        let cancelled = false;
 
-        const initializeMedia = async () => {
+        const init = async () => {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
-                        facingMode: 'user'
-                    },
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    }
+                    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
                 });
-
+                if (cancelled) {
+                    stream.getTracks().forEach((t) => t.stop());
+                    return;
+                }
                 localStreamRef.current = stream;
-
-                if (localVideoRef.current) {
-                    localVideoRef.current.srcObject = stream;
-                }
-
-                // Add stream to peer connection
-                if (peer) {
-                    stream.getTracks().forEach(track => {
-                        peer.addTrack(track, stream);
-                    });
-                }
-
-            } catch (error) {
-                console.error('Error accessing media devices:', error);
+                if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+                if (peer) stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+            } catch {
                 alert('Could not access camera/microphone. Please grant permissions.');
             }
         };
 
-        initializeMedia();
-
+        init();
         return () => {
-            if (localStreamRef.current) {
-                localStreamRef.current.getTracks().forEach(track => track.stop());
-            }
+            cancelled = true;
+            localStreamRef.current?.getTracks().forEach((t) => t.stop());
         };
     }, [isCallActive, peer]);
 
     // Handle remote stream
     useEffect(() => {
         if (!peer) return;
-
-        const handleStream = (stream) => {
-            console.log('Received remote stream');
-            if (remoteVideoRef.current) {
-                remoteVideoRef.current.srcObject = stream;
-                setIsRemoteVideoLoaded(true);
-            }
+        const onStream = (stream) => {
+            remoteStreamRef.current = stream;
+            if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
+            setIsRemoteVideoLoaded(true);
         };
-
-        peer.on('stream', handleStream);
-
-        return () => {
-            peer.off('stream', handleStream);
-        };
+        peer.on('stream', onStream);
+        return () => peer.off('stream', onStream);
     }, [peer]);
+
+    // Re-apply srcObject when swapping video views
+    useEffect(() => {
+        if (localVideoRef.current && localStreamRef.current) {
+            localVideoRef.current.srcObject = localStreamRef.current;
+        }
+        if (remoteVideoRef.current && remoteStreamRef.current) {
+            remoteVideoRef.current.srcObject = remoteStreamRef.current;
+        }
+    }, [showLocalInLarge]);
 
     // Toggle video
     const toggleVideo = () => {
-        if (localStreamRef.current) {
-            const videoTrack = localStreamRef.current.getVideoTracks()[0];
-            if (videoTrack) {
-                videoTrack.enabled = !videoTrack.enabled;
-                setIsVideoEnabled(videoTrack.enabled);
-            }
+        const track = localStreamRef.current?.getVideoTracks()[0];
+        if (track) {
+            track.enabled = !track.enabled;
+            setIsVideoEnabled(track.enabled);
         }
     };
 
     // Toggle audio
     const toggleAudio = () => {
-        if (localStreamRef.current) {
-            const audioTrack = localStreamRef.current.getAudioTracks()[0];
-            if (audioTrack) {
-                audioTrack.enabled = !audioTrack.enabled;
-                setIsAudioEnabled(audioTrack.enabled);
-            }
+        const track = localStreamRef.current?.getAudioTracks()[0];
+        if (track) {
+            track.enabled = !track.enabled;
+            setIsAudioEnabled(track.enabled);
         }
     };
 
     // Screen sharing
     const toggleScreenShare = async () => {
-        if (isScreenSharing) {
-            // Stop screen sharing, return to camera
-            try {
+        try {
+            if (isScreenSharing) {
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-                    audio: { echoCancellation: true }
                 });
-
-                const videoTrack = stream.getVideoTracks()[0];
-                const sender = peer._pc.getSenders().find(s => s.track?.kind === 'video');
-                if (sender) {
-                    sender.replaceTrack(videoTrack);
-                }
+                const track = stream.getVideoTracks()[0];
+                const sender = peer._pc.getSenders().find((s) => s.track?.kind === 'video');
+                if (sender) sender.replaceTrack(track);
 
                 localStreamRef.current.getVideoTracks()[0].stop();
                 localStreamRef.current.removeTrack(localStreamRef.current.getVideoTracks()[0]);
-                localStreamRef.current.addTrack(videoTrack);
-
-                if (localVideoRef.current) {
-                    localVideoRef.current.srcObject = localStreamRef.current;
-                }
-
+                localStreamRef.current.addTrack(track);
+                if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
                 setIsScreenSharing(false);
-            } catch (error) {
-                console.error('Error returning to camera:', error);
-            }
-        } else {
-            // Start screen sharing
-            try {
+            } else {
                 const screenStream = await navigator.mediaDevices.getDisplayMedia({
                     video: { cursor: 'always' },
-                    audio: false
                 });
-
                 const screenTrack = screenStream.getVideoTracks()[0];
-                const sender = peer._pc.getSenders().find(s => s.track?.kind === 'video');
-                if (sender) {
-                    sender.replaceTrack(screenTrack);
-                }
+                const sender = peer._pc.getSenders().find((s) => s.track?.kind === 'video');
+                if (sender) sender.replaceTrack(screenTrack);
 
                 localStreamRef.current.getVideoTracks()[0].stop();
                 localStreamRef.current.removeTrack(localStreamRef.current.getVideoTracks()[0]);
                 localStreamRef.current.addTrack(screenTrack);
-
-                if (localVideoRef.current) {
-                    localVideoRef.current.srcObject = localStreamRef.current;
-                }
-
+                if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
                 setIsScreenSharing(true);
 
-                screenTrack.onended = () => {
-                    toggleScreenShare();
-                };
-            } catch (error) {
-                console.error('Error sharing screen:', error);
+                screenTrack.onended = () => toggleScreenShare();
             }
+        } catch (err) {
+            console.error('Screen share error:', err);
         }
     };
 
     // Recording
     const startRecording = () => {
         try {
-            const combinedStream = new MediaStream([
-                ...localStreamRef.current.getTracks(),
-            ]);
-
-            mediaRecorderRef.current = new MediaRecorder(combinedStream, {
-                mimeType: 'video/webm;codecs=vp8,opus'
-            });
-
+            const stream = new MediaStream([...localStreamRef.current.getTracks()]);
+            const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus' });
             recordedChunksRef.current = [];
 
-            mediaRecorderRef.current.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    recordedChunksRef.current.push(event.data);
-                }
+            recorder.ondataavailable = (e) => {
+                if (e.data.size > 0) recordedChunksRef.current.push(e.data);
             };
 
-            mediaRecorderRef.current.onstop = () => {
+            recorder.onstop = () => {
                 const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -219,11 +155,11 @@ const VideoCall = ({ peer, isCallActive, onEndCall }) => {
                 URL.revokeObjectURL(url);
             };
 
-            mediaRecorderRef.current.start(1000);
+            recorder.start(1000);
+            mediaRecorderRef.current = recorder;
             setIsRecording(true);
-        } catch (error) {
-            console.error('Error starting recording:', error);
-            alert('Recording not supported in this browser');
+        } catch {
+            alert('Recording not supported in this browser.');
         }
     };
 
@@ -234,143 +170,157 @@ const VideoCall = ({ peer, isCallActive, onEndCall }) => {
         }
     };
 
-    // Format call duration
+    // Format duration
     const formatDuration = (seconds) => {
-        const hrs = Math.floor(seconds / 3600);
-        const mins = Math.floor((seconds % 3600) / 60);
-        const secs = seconds % 60;
-        if (hrs > 0) {
-            return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-        }
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        return h > 0
+            ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+            : `${m}:${String(s).padStart(2, '0')}`;
     };
 
     // End call
     const handleEndCall = () => {
-        if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(track => track.stop());
-        }
-        if (isRecording) {
-            stopRecording();
-        }
+        localStreamRef.current?.getTracks().forEach((t) => t.stop());
+        if (isRecording) stopRecording();
         onEndCall();
     };
 
+    // Not active state
     if (!isCallActive) {
         return (
             <div className="flex items-center justify-center h-full bg-dark-800 rounded-lg">
                 <div className="text-center">
                     <Video className="w-16 h-16 text-gray-500 mx-auto mb-4" />
-                    <p className="text-gray-400">Video call not started</p>
-                    <p className="text-sm text-gray-500 mt-2">Connect with a peer to start video call</p>
+                    <p className="text-gray-400">Connect with a peer to start video call</p>
                 </div>
             </div>
         );
     }
 
-    return (
-        <div className="relative h-full bg-dark-900 rounded-lg overflow-hidden">
-            {/* Remote Video (Full Screen) */}
-            <div className="relative w-full h-full">
-                <video
-                    ref={remoteVideoRef}
-                    autoPlay
-                    playsInline
-                    className="w-full h-full object-cover"
-                />
-                {!isRemoteVideoLoaded && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-dark-800">
-                        <div className="text-center">
-                            <div className="animate-pulse-slow mb-4">
-                                <Video className="w-16 h-16 text-blue-500 mx-auto" />
-                            </div>
-                            <p className="text-gray-400">Waiting for remote video...</p>
-                        </div>
+    // Large video content
+    const largeVideo = showLocalInLarge ? (
+        <>
+            <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+            {!isVideoEnabled && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-700">
+                    <VideoOff className="w-20 h-20 text-gray-500" />
+                </div>
+            )}
+            <div className="absolute bottom-6 left-6 bg-black/60 px-4 py-2 rounded-lg text-sm text-white font-medium">You</div>
+        </>
+    ) : (
+        <>
+            <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+            {!isRemoteVideoLoaded && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-700">
+                    <div className="text-center">
+                        <Video className="w-20 h-20 text-blue-500 animate-pulse mx-auto mb-3" />
+                        <p className="text-gray-400 text-lg">Connecting...</p>
                     </div>
-                )}
+                </div>
+            )}
+            <div className="absolute bottom-6 left-6 bg-black/60 px-4 py-2 rounded-lg text-sm text-white font-medium">Participant</div>
+        </>
+    );
+
+    // Small PIP video content
+    const smallVideo = showLocalInLarge ? (
+        <>
+            <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+            {!isRemoteVideoLoaded && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-700">
+                    <Video className="w-10 h-10 text-blue-500 animate-pulse" />
+                </div>
+            )}
+            <div className="absolute bottom-2 left-2 bg-black/70 px-2 py-1 rounded text-xs text-white">Participant</div>
+        </>
+    ) : (
+        <>
+            <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+            {!isVideoEnabled && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-700">
+                    <VideoOff className="w-10 h-10 text-gray-500" />
+                </div>
+            )}
+            <div className="absolute bottom-2 left-2 bg-black/70 px-2 py-1 rounded text-xs text-white">You</div>
+        </>
+    );
+
+    return (
+        <div className="relative h-full bg-gray-800">
+            {/* Main video - full screen */}
+            <div className="absolute inset-0">
+                {largeVideo}
             </div>
 
-            {/* Call Duration Timer */}
-            <div className="absolute top-4 left-4 bg-dark-800/90 px-4 py-2 rounded-lg">
-                <span className="text-white font-mono text-lg">{formatDuration(callDuration)}</span>
+            {/* Picture-in-picture - small corner video */}
+            <div
+                className="absolute top-6 right-6 w-64 h-48 bg-gray-700 rounded-lg overflow-hidden cursor-pointer shadow-2xl border-2 border-gray-600 hover:border-blue-500 transition-all z-20"
+                onClick={() => setShowLocalInLarge(!showLocalInLarge)}
+                title="Click to switch video"
+            >
+                {smallVideo}
             </div>
 
-            {/* Recording Indicator */}
+            {/* Recording indicator */}
             {isRecording && (
-                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-500/90 px-4 py-2 rounded-lg flex items-center gap-2 animate-pulse">
+                <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-red-500/90 px-4 py-2 rounded-lg flex items-center gap-2 animate-pulse z-10">
                     <Circle size={12} className="fill-current" />
                     <span className="text-white font-semibold text-sm">Recording</span>
                 </div>
             )}
 
-            {/* Local Video (Picture-in-Picture) */}
-            <div className="absolute top-4 right-4 w-48 h-36 bg-dark-800 rounded-lg overflow-hidden border-2 border-dark-600 shadow-lg">
-                <video
-                    ref={localVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover"
-                />
-                {!isVideoEnabled && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-dark-800">
-                        <VideoOff className="w-8 h-8 text-gray-500" />
-                    </div>
-                )}
+            {/* Call duration */}
+            <div className="absolute top-6 left-6 bg-gray-900/80 px-3 py-1.5 rounded-lg z-10">
+                <span className="text-white font-mono text-sm">{formatDuration(callDuration)}</span>
             </div>
 
-            {/* Controls */}
-            <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 flex gap-3">
-                <button
-                    onClick={toggleVideo}
-                    className={`p-4 rounded-full transition-all ${isVideoEnabled
-                        ? 'bg-dark-700 hover:bg-dark-600 text-white'
-                        : 'bg-red-500 hover:bg-red-600 text-white'
-                        }`}
-                    title={isVideoEnabled ? 'Turn off video' : 'Turn on video'}
-                >
-                    {isVideoEnabled ? <Video size={24} /> : <VideoOff size={24} />}
-                </button>
-
-                <button
-                    onClick={toggleAudio}
-                    className={`p-4 rounded-full transition-all ${isAudioEnabled
-                        ? 'bg-dark-700 hover:bg-dark-600 text-white'
-                        : 'bg-red-500 hover:bg-red-600 text-white'
-                        }`}
-                    title={isAudioEnabled ? 'Mute' : 'Unmute'}
-                >
-                    {isAudioEnabled ? <Mic size={24} /> : <MicOff size={24} />}
-                </button>
-
-                <button
-                    onClick={toggleScreenShare}
-                    className={`p-4 rounded-full transition-all ${isScreenSharing
-                        ? 'bg-blue-500 hover:bg-blue-600 text-white'
-                        : 'bg-dark-700 hover:bg-dark-600 text-white'
-                        }`}
-                    title={isScreenSharing ? 'Stop sharing' : 'Share screen'}
-                >
-                    <Monitor size={24} />
-                </button>
-
-                <button
-                    onClick={isRecording ? stopRecording : startRecording}
-                    className={`p-4 rounded-full transition-all ${isRecording
-                        ? 'bg-red-500 hover:bg-red-600 text-white'
-                        : 'bg-dark-700 hover:bg-dark-600 text-white'
-                        }`}
-                    title={isRecording ? 'Stop recording' : 'Start recording'}
-                >
-                    {isRecording ? <Square size={24} /> : <Circle size={24} />}
-                </button>
-
+            {/* Controls - bottom center */}
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4 z-10">
                 <button
                     onClick={handleEndCall}
-                    className="p-4 rounded-full bg-red-500 hover:bg-red-600 text-white transition-all"
+                    className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium"
                     title="End call"
                 >
-                    <PhoneOff size={24} />
+                    End Meeting
+                </button>
+                <button
+                    onClick={toggleVideo}
+                    className={`p-3 rounded-full transition-all ${
+                        isVideoEnabled ? 'bg-gray-600 hover:bg-gray-500' : 'bg-red-500 hover:bg-red-600'
+                    } text-white`}
+                    title={isVideoEnabled ? 'Turn off video' : 'Turn on video'}
+                >
+                    {isVideoEnabled ? <Video size={20} /> : <VideoOff size={20} />}
+                </button>
+                <button
+                    onClick={toggleAudio}
+                    className={`p-3 rounded-full transition-all ${
+                        isAudioEnabled ? 'bg-gray-600 hover:bg-gray-500' : 'bg-red-500 hover:bg-red-600'
+                    } text-white`}
+                    title={isAudioEnabled ? 'Mute' : 'Unmute'}
+                >
+                    {isAudioEnabled ? <Mic size={20} /> : <MicOff size={20} />}
+                </button>
+                <button
+                    onClick={toggleScreenShare}
+                    className={`p-3 rounded-full transition-all ${
+                        isScreenSharing ? 'bg-blue-500 hover:bg-blue-600' : 'bg-gray-600 hover:bg-gray-500'
+                    } text-white`}
+                    title={isScreenSharing ? 'Stop sharing' : 'Share screen'}
+                >
+                    <Monitor size={20} />
+                </button>
+                <button
+                    onClick={isRecording ? stopRecording : startRecording}
+                    className={`p-3 rounded-full transition-all ${
+                        isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-gray-600 hover:bg-gray-500'
+                    } text-white`}
+                    title={isRecording ? 'Stop recording' : 'Start recording'}
+                >
+                    {isRecording ? <Square size={20} /> : <Circle size={20} />}
                 </button>
             </div>
         </div>
